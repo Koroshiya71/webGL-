@@ -46,7 +46,7 @@
 			else
 				v_fL=normalize(u_LightPosition.xyz);
 			// 计算裁剪坐标系下坐标
-			gl_Position = u_MVPMatrix * vec4(a_Position, 1.0);	
+			gl_Position = u_Projection*vec4(pos,1.0);
 		}
 		</script>
 		<!--片元Shader程序-->
@@ -93,6 +93,6 @@
 		<script type="text/javascript" src="./Common/initShaders.js"></script>
 		<script type="text/javascript" src="./Common/MV.js"></script>
 		<!--主程序-->
-		<script type="text/javascript" src="MyScene.js"></script>
+		<script type="text/javascript" src="27XYP_MyScene.js"></script>
 	</body>
 </html>
