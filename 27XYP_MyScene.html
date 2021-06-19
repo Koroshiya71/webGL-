@@ -19,19 +19,21 @@
 		
 		<!--顶点Shader程序-->
 		<script id="vertex-shader" type="x-shader/x-vertex">
+		const int LightNum=2;//光源数量
+
 		attribute vec3 a_Position;	// 输入三维顶点坐标
 		attribute vec3 a_Normal;//顶点法向（建模坐标系）
 
 
 		varying vec3 v_fN;//法向（观察坐标系）
 		varying vec3 v_fE;//观察向量（观察坐标系）
-		varying vec3 v_fL;//光照向量（观察坐标系）
+		varying vec3 v_fL[LightNum];//光照向量数组（观察坐标系）
 
 		uniform mat4 u_ModelView;//模视矩阵
 		uniform mat4 u_Projection;//投影矩阵
 		uniform mat3 u_NormalMat;//法向变换矩阵
 
-		uniform vec4 u_LightPosition;//光源位置/方向（观察坐标系）
+		uniform vec4 u_LightPosition[LightNum];//光源位置/方向（观察坐标系）
 
 
 		void main(){
@@ -41,51 +43,65 @@
 			//计算观察坐标系下法向
 			v_fN=normalize(u_NormalMat*a_Normal);
 
-			if(u_LightPosition.w!=0.0)//近距离光源
-				v_fL=normalize(u_LightPosition.xyz-pos);
-			else
-				v_fL=normalize(u_LightPosition.xyz);
+			for(int i = 0; i < LightNum; i++){
+				if(u_LightPosition[i].w!=0.0)//近距离光源
+					v_fL[i]=normalize(u_LightPosition[i].xyz-pos);
+				else//远距离光源
+					v_fL[i]=normalize(u_LightPosition[i].xyz);
+			}
+			
 			// 计算裁剪坐标系下坐标
 			gl_Position = u_Projection*vec4(pos,1.0);
 		}
 		</script>
 		<!--片元Shader程序-->
 		<script id="fragment-shader" type="x-shader/x-fragment">
+		const int LightNum = 2; // 光源数量
 		precision mediump float;	// 浮点数精度为中等
+
 		varying vec3 v_fN;//法向（观察坐标系）
 		varying vec3 v_fE;//观察向量（观察坐标系）
-		varying vec3 v_fL;//光照向量（观察坐标系）
+		varying vec3 v_fL[LightNum];//光照向量（观察坐标系）
 
 		uniform float u_Shininess;//高光系数
 		//光源亮度对材质反射系数的乘积
-		uniform vec3 u_AmbientProduct,u_DiffuseProduct,u_SpecularProduct;
+		uniform vec3 u_AmbientProduct[LightNum];
+		uniform vec3 u_DiffuseProduct[LightNum];
+		uniform vec3 u_SpecularProduct[LightNum];
+		uniform vec3 u_Emission;//发射光属性
 
 		void main(){
 			//归一化输入的向量
 			vec3 N=normalize(v_fN);
 			vec3 E=normalize(v_fE);
-			vec3 L=normalize(v_fL);
-
-			vec3 H=normalize(L+E);
-
-			vec3 ambient=u_AmbientProduct;//环境反射分量
-			//漫反射分量
-			float Kd=max(dot(L,N),0.0);
-			vec3 diffuse =Kd*u_DiffuseProduct;
-
-			//镜面反射分量
-			vec3 specular;
-			if(Kd==0.0)//即dot(L,N)<=0
-			{
-				specular=vec3(0.0,0.0,0.0);
+			//用户累加的光照颜色，初始为0
+			vec3 fragColor=vec3(0.0, 0.0, 0.0);
+			//针对每一个光源进行光照计算
+			//并将计算得到的颜色累加到fragColor上
+			for(int i = 0; i < LightNum; i++){
+				vec3 L=normalize(v_fL[i]);
+				vec3 H = normalize( L + E );//半角向量
+				//环境反射分量
+				vec3 ambient=u_AmbientProduct[i];
+				//漫反射分量
+				float Kd=max(dot(L, N), 0.0);
+				vec3 diffuse =Kd*u_DiffuseProduct[i];
+				//镜面反射分量
+				vec3 specular;
+				if(Kd==0.0){
+					specular=vec3(0.0, 0.0, 0.0);
+				}
+				else{
+					float Ks=pow( max(dot(N, H), 0.0), u_Shininess );
+					specular=Ks*u_SpecularProduct[i];
+				}
+				//累加颜色
+				fragColor += ambient+diffuse+specular;
 			}
-			else{
-				float Ks=pow(max(dot(N,H),0.0),u_Shininess);
-				specular=Ks*u_SpecularProduct;
-			}
-
-			//得到最终颜色(分量值超过1为自动截断)
-			gl_FragColor=vec4(ambient+diffuse+specular,1.0);
+			fragColor += u_Emission;	//加上物体自身的发射光
+			
+			gl_FragColor=vec4(fragColor,1.0);
+			
 		}
 		</script>
 		<!--下面是辅助我们进行程序编写的3个JavaScript程序-->

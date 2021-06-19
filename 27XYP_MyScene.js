@@ -24,15 +24,60 @@ var jumpTime = 0;			// 从跳跃开始经历的时间
 var Light = function () {
 	//光源位置/方向（默认为斜上方方向光源）
 	this.pos = vec4(1.0, 1.0, 1.0, 0.0);
+	this.ambient = vec3(0.2, 0.2, 0.2);//环境光
+	this.diffuse = vec3(1.0, 1.0, 1.0);//漫反射光
+	this.specular = vec3(1.0, 1.0, 1.0);//镜面反射光
 };
 
+
+
+//材质对象
+//构造函数，各属性有默认值
+var Material = function () {
+	this.ambient = vec3(0.0, 0.0, 0.0);//环境反射系数
+	this.diffuse = vec3(0.8, 0.8, 0.8);//漫反射系数
+	this.specular = vec3(0.0, 0.0, 0.0);//镜面反射系数
+	this.emission = vec3(0.0, 0.0, 0.0);//发射光
+	this.shininess = 10;//高光系数
+
+}
+
+var lights = [];//光源数组
+
+var lightSun = new Light(); //使用默认光源属性
+var lightRed = new Light();
+
+var mtlRedLight = new Material(); //红色光源球使用的材质类型
+//设置红色光源球的材质属性
+mtlRedLight.ambient = vec3(0.1, 0.1, 0.1);// 环境反射系数
+mtlRedLight.diffuse = vec3(0.2, 0.2, 0.2);//漫反射系数
+mtlRedLight.specular = vec3(0.2, 0.2, 0.2);// 镜面反射系数
+mtlRedLight.emission = vec3(1.0, 0.0, 0.0);//发射光
+mtlRedLight.shininess = 150;// 高光系数
+
+
+
+//光源属性初始化
+function initLights() {
+	lights.push(lightSun);
+
+	/*设置红色光源属性 */
+	lightRed.pos = vec4(0.0, 0.0, 0.0, 1.0); // 光源位置(建模坐标系)
+	lightRed.ambient = vec3(0.2, 0.0, 0.0);//环境光
+	lightRed.diffuse = vec3(1.0, 0.0, 0.0);//漫反射光
+	lightRed.specular = vec3(1.0, 0.0, 0.0);//镜面反射光
+	lights.push(lightRed);
+}
 // 定义Obj对象
 // 构造函数
 var Obj = function () {
 	this.numVertices = 0; 		// 顶点个数
 	this.vertices = new Array(0); // 用于保存顶点数据的数组
+	this.normals = new Array(0); //用于保存法向数据的数组
+
 	this.vertexBuffer = null;	// 存放顶点数据的buffer对象
-	this.color = vec3(1.0, 1.0, 1.0); // 对象颜色，默认为白色
+	this.normalBuffer = null;//存放法向数据的buffer对象
+	this.material = new Material();//材质
 };
 
 // 初始化缓冲区对象(VBO)
@@ -49,11 +94,25 @@ Obj.prototype.initBuffers = function () {
 	);
 	// 顶点数据已传至GPU端，可释放内存
 	this.vertices.length = 0;
-}
+
+	/*创建并初始化法向缓冲区对象(Buffer Object)*/
+	//创建缓冲区对象，存于成员变量nromalBuffer中
+	this.normalBuffer = gl.createBuffer();
+	//将normalBuffer绑定为当前Array Buffer对象
+	gl.bindBuffer(gl.ARRAY_BUFFER, this.normalBuffer);
+	//为buffer对象在GPU端申请空间，并提供数据
+	gl.bufferData(gl.ARRAY_BUFFER,
+		flatten(this.normals),
+		gl.STATIC_DRAW
+	);
+	//顶点数据已传至GPU端，可以释放内存
+	this.normals.length = 0;
+
+};
 
 // 绘制几何对象
 // 参数为模视矩阵
-Obj.prototype.draw = function (matMV) {
+Obj.prototype.draw = function (matMV, material) {
 	// 设置为a_Position提供数据的方式
 	gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
 	// 为顶点属性数组提供数据(数据存放在vertexBuffer对象中)
@@ -68,13 +127,45 @@ Obj.prototype.draw = function (matMV) {
 	// 为a_Position启用顶点数组
 	gl.enableVertexAttribArray(program.a_Position);
 
-	// 传颜色
-	gl.uniform3fv(program.u_Color, flatten(this.color));
+
+
+	//设置为a_Normal提供数据的方式
+	gl.bindBuffer(gl.ARRAY_BUFFER, this.normalBuffer);
+	//为顶点属性数组提供数据（数据存放在normalBuffer对象中）
+	gl.vertexAttribPointer(program.a_Normal, 3, gl.FLOAT, false, 0, 0);
+	//为a_Normal启用顶点数组
+	gl.enableVertexAttribArray(program.a_Normal);
+
+
+	var mtl;
+	if (arguments.length > 1)//提供了材质
+		mtl = material;
+	else
+		mtl = this.material;
+	//设置材质属性
+	var ambientProducts = [];
+	var diffuseProducts = [];
+	var specularProducts = [];
+	for (var i = 0; i < lights.length; i++) {
+		ambientProducts.push(mult(lights[i].ambient, mtl.ambient));
+		diffuseProducts.push(mult(lights[i].diffuse, mtl.diffuse));
+		specularProducts.push(mult(lights[i].specular, mtl.specular));
+
+	}
+	gl.uniform3fv(program.u_AmbientProduct,
+		flatten(ambientProducts));
+	gl.uniform3fv(program.u_DiffuseProduct,
+		flatten(diffuseProducts));
+	gl.uniform3fv(program.u_SpecularProduct,
+		flatten(specularProducts));
+
+	gl.uniform3fv(program.u_Emission, flatten(mtl.emission));
+	gl.uniform1f(program.u_Shininess, mtl.shininess);
 
 	// 开始绘制
 	gl.uniformMatrix4fv(program.u_ModelView, false,
 		flatten(matMV)); // 传MV矩阵
-	gl.uniformMatrix3fv(program.NormalMat, false,
+	gl.uniformMatrix3fv(program.u_NormalMat, false,
 		flatten(normalMatrix(matMV))); // 传法向矩阵
 	gl.drawArrays(gl.TRIANGLES, 0, this.numVertices);
 }
@@ -101,9 +192,24 @@ function buildGround(fExtent, fStep) {
 			obj.vertices.push(ptLowerRight);
 			obj.vertices.push(ptUpperRight);
 
+			//顶点法向
+			obj.normals.push(vec3(0, 1, 0));
+			obj.normals.push(vec3(0, 1, 0));
+			obj.normals.push(vec3(0, 1, 0));
+			obj.normals.push(vec3(0, 1, 0));
+			obj.normals.push(vec3(0, 1, 0));
+			obj.normals.push(vec3(0, 1, 0));
+
+
 			obj.numVertices += 6;
 		}
 	}
+	//设置地面材质
+	obj.material.ambient = vec3(0.1, 0.1, 0.1);
+	obj.material.diffuse = vec3(0.8, 0.8, 0.8);
+	obj.material.specular = vec3(0.3, 0.3, 0.3);
+	obj.material.emission = vec3(0.0, 0.0, 0.0);
+	obj.material.shininess = 10;
 
 	return obj;
 }
@@ -161,12 +267,28 @@ function buildSphere(radius, columns, rows) {
 			obj.vertices.push(vertices[ul]);
 			obj.vertices.push(vertices[br]);
 			obj.vertices.push(vertices[ur]);
+
+			//球的法向与顶点坐标相同
+			obj.normals.push(vertices[ul]);
+			obj.normals.push(vertices[bl]);
+			obj.normals.push(vertices[br]);
+			obj.normals.push(vertices[ul]);
+			obj.normals.push(vertices[br]);
+			obj.normals.push(vertices[ur]);
+
 		}
 	}
 
 	vertices.length = 0; // 已用不到，释放 
 	obj.numVertices = rows * columns * 6; // 顶点数
 
+
+	//设置圆环材质
+	obj.material.ambient = vec3(0.18, 0.15, 1.0);
+	obj.material.diffuse = vec3(0.16, 1.0, 0.54);
+	obj.material.specular = vec3(0.24, 0.14, 1.0);
+	obj.material.emission = vec3(0.0, 0.0, 0.0);
+	obj.material.shininess = 10;
 	return obj;
 }
 
@@ -191,6 +313,11 @@ function buildTorus(majorRadius, minorRadius, numMajor, numMinor) {
 		var x1 = Math.cos(a1);
 		var y1 = Math.sin(a1);
 
+		//三角形条带左右顶点（一个在下一个在上）对应的两个圆环中心
+		var center0 = mult(majorRadius, vec3(x0, y0, 0));
+		var center1 = mult(majorRadius, vec3(x1, y1, 0));
+
+
 		for (var j = 0; j < numMinor; ++j) {
 			var b0 = j * minorStep;
 			var b1 = b0 + minorStep;
@@ -211,9 +338,23 @@ function buildTorus(majorRadius, minorRadius, numMajor, numMinor) {
 			obj.vertices.push(left1);
 			obj.vertices.push(right0);
 			obj.vertices.push(right1);
+
+			//法向从圆环中心指向顶点
+			obj.normals.push(subtract(left0, center0));
+			obj.normals.push(subtract(right0, center1));
+			obj.normals.push(subtract(left1, center0));
+			obj.normals.push(subtract(left1, center0));
+			obj.normals.push(subtract(right0, center1));
+			obj.normals.push(subtract(right1, center1));
+
 		}
 	}
-
+	//设置圆环材质
+	obj.material.ambient = vec3(0.21, 0.15, 1.0);
+	obj.material.diffuse = vec3(0.6, 0.53, 0.54);
+	obj.material.specular = vec3(0.52, 0.4, 1.0);
+	obj.material.emission = vec3(0.0, 0.0, 0.0);
+	obj.material.shininess = 10;
 	return obj;
 }
 
@@ -244,11 +385,14 @@ function getLocation() {
 		console.log("获取uniform变量u_NormalMat失败！");
 	}
 
-	program.LightPositions = gl.getUniformLocation(program, "u_LightPosition");
+	program.u_LightPosition = gl.getUniformLocation(program, "u_LightPosition");
 	if (!program.u_LightPosition) {
 		console.log("获取uniform变量u_LightPosition失败！");
 	}
-
+	program.u_Emission = gl.getUniformLocation(program, "u_Emission");
+	if (!program.u_Emission) {
+		console.log("获取uniform变量u_Emission失败！");
+	}
 	program.u_Shininess = gl.getUniformLocation(program, "u_Shininess");
 	if (!program.u_Shininess) {
 		console.log("获取uniform变量u_Shininess失败！");
@@ -343,6 +487,9 @@ window.onload = function main() {
 
 	//传投影矩阵
 	gl.uniformMatrix4fv(program.u_Projection, false, flatten(matProj));
+
+	//初始化光照
+	initLights();
 	// 初始化场景中的几何对象
 	initObjs();
 
@@ -477,6 +624,18 @@ function render() {
 	// 模视矩阵初始化为照相机变换矩阵
 	var matMV = mult(translate(0, -jumpY, 0), matCamera);
 
+
+	/*为光源位置数组传值 */
+	var lightPositions = [];//光源位置数组
+	//决定旋转球位置的变换
+	var matRotatingSphere = mult(matMV, mult(translate(0.0, 0.0, -2.5),
+		mult(rotateY(-yRot * 2.0), translate(1.0, 0.0, 0.0))));
+	lightPositions.push(mult(matMV, lightSun.pos));
+	lightPositions.push(mult(matRotatingSphere, lightRed.pos));
+	//传观察坐标系下光源位置/方向
+	gl.uniform4fv(program.u_LightPosition,
+		flatten(lightPositions));
+
 	/*绘制地面*/
 	mvStack.push(matMV);
 	// 将地面移到y=-0.4平面上
@@ -504,7 +663,7 @@ function render() {
 	matMV = mult(matMV, rotateY(-yRot * 2.0));
 	matMV = mult(matMV, translate(1.0, 0.0, 0.0));
 	matMV = mult(matMV, rotateX(90)); // 调整南北极
-	sphere.draw(matMV);
+	sphere.draw(matMV,mtlRedLight);
 	matMV = mvStack.pop();
 
 	/*绘制自转的圆环*/
