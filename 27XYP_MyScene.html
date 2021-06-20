@@ -4,7 +4,7 @@
 		<!--使用UTF-8字符编码，无此句在某些浏览器会出现乱码-->
 		<meta charset = "utf-8">
 		<!--文档标题，会显示在网页标题栏-->
-		<title>学号姓名</title>
+		<title>2018031701027 熊一鹏</title>
 	</head>
 	
 	<body><!--文档主体-->
@@ -19,7 +19,7 @@
 		
 		<!--顶点Shader程序-->
 		<script id="vertex-shader" type="x-shader/x-vertex">
-		const int LightNum=2;//光源数量
+		const int LightNum=3;//光源数量
 
 		attribute vec3 a_Position;	// 输入三维顶点坐标
 		attribute vec3 a_Normal;//顶点法向（建模坐标系）
@@ -28,6 +28,7 @@
 		varying vec3 v_fN;//法向（观察坐标系）
 		varying vec3 v_fE;//观察向量（观察坐标系）
 		varying vec3 v_fL[LightNum];//光照向量数组（观察坐标系）
+		varying float v_Dist;	//顶点到手电筒光源距离
 
 		uniform mat4 u_ModelView;//模视矩阵
 		uniform mat4 u_Projection;//投影矩阵
@@ -35,8 +36,12 @@
 
 		uniform vec4 u_LightPosition[LightNum];//光源位置/方向（观察坐标系）
 
+		attribute vec2 a_Texcoord;	// 顶点纹理坐标
+		varying vec2 v_Texcoord;	// 输出纹理坐标
 
 		void main(){
+			v_Texcoord = a_Texcoord;
+
 			//将顶点坐标转到观察坐标系下（在观察坐标系计算光照)
 			vec3 pos=(u_ModelView*vec4(a_Position,1.0)).xyz;
 			v_fE=normalize(-pos);//观察者方向向量
@@ -50,18 +55,27 @@
 					v_fL[i]=normalize(u_LightPosition[i].xyz);
 			}
 			
+			//计算顶点到手电筒光源的距离
+			v_Dist=distance(pos,u_LightPosition[2].xyz);
+
 			// 计算裁剪坐标系下坐标
 			gl_Position = u_Projection*vec4(pos,1.0);
 		}
 		</script>
 		<!--片元Shader程序-->
 		<script id="fragment-shader" type="x-shader/x-fragment">
-		const int LightNum = 2; // 光源数量
+		const int LightNum = 3; // 光源数量
 		precision mediump float;	// 浮点数精度为中等
 
+		//最后一个光源的聚光灯参数
+		uniform vec3 u_SpotDirection;//聚光灯照射方向（观察坐标系）
+		uniform float u_SpotCutOff;	//聚光灯截止角（角度）
+		uniform float u_SpotExponent;//聚光灯衰减指数
+		
 		varying vec3 v_fN;//法向（观察坐标系）
 		varying vec3 v_fE;//观察向量（观察坐标系）
 		varying vec3 v_fL[LightNum];//光照向量（观察坐标系）
+		varying float v_Dist;	//顶点到手电筒光源距离
 
 		uniform float u_Shininess;//高光系数
 		//光源亮度对材质反射系数的乘积
@@ -69,6 +83,12 @@
 		uniform vec3 u_DiffuseProduct[LightNum];
 		uniform vec3 u_SpecularProduct[LightNum];
 		uniform vec3 u_Emission;//发射光属性
+		uniform bool u_LightOn[LightNum];//光源开关
+
+		varying vec2 v_Texcoord;	// 输入片元纹理坐标
+		uniform sampler2D u_Sampler;// 2D纹理采样器
+
+		uniform float u_Alpha;//透明度
 
 		void main(){
 			//归一化输入的向量
@@ -76,31 +96,48 @@
 			vec3 E=normalize(v_fE);
 			//用户累加的光照颜色，初始为0
 			vec3 fragColor=vec3(0.0, 0.0, 0.0);
+			vec3 specular=vec3(0.0, 0.0, 0.0);//镜面光分量单独累加
 			//针对每一个光源进行光照计算
 			//并将计算得到的颜色累加到fragColor上
 			for(int i = 0; i < LightNum; i++){
+				if(!u_LightOn[i]) continue;//如果光源关闭则不计算
+
 				vec3 L=normalize(v_fL[i]);
 				vec3 H = normalize( L + E );//半角向量
+
+				float KSpot=1.0;//受聚光灯影响的衰减系数（1.0即不衰减）
+				if(i==2){
+					//对照射方向归一化并反向（因为L也是从顶点指向光源）
+					vec3 spotDir=-normalize(u_SpotDirection);
+					float cutoff=radians(u_SpotCutOff);//角度转弧度
+					float c=dot(L,spotDir);//偏离角的cos值
+					if(c<cos(cutoff))//偏离角度超过截止角
+						KSpot=0.0;//完全衰减
+					else//强度衰减正比于c^f
+					{
+						float d=1.0+0.5*v_Dist;
+						KSpot=max(pow(c,u_SpotExponent),0.0)/d;
+					}
+				}
+
 				//环境反射分量
 				vec3 ambient=u_AmbientProduct[i];
 				//漫反射分量
 				float Kd=max(dot(L, N), 0.0);
-				vec3 diffuse =Kd*u_DiffuseProduct[i];
-				//镜面反射分量
-				vec3 specular;
-				if(Kd==0.0){
-					specular=vec3(0.0, 0.0, 0.0);
-				}
-				else{
+				vec3 diffuse =KSpot*Kd*u_DiffuseProduct[i];
+
+				if(Kd!=0.0){
 					float Ks=pow( max(dot(N, H), 0.0), u_Shininess );
-					specular=Ks*u_SpecularProduct[i];
+					specular+=KSpot*Ks*u_SpecularProduct[i];
 				}
 				//累加颜色
-				fragColor += ambient+diffuse+specular;
+				fragColor += ambient+diffuse;
 			}
 			fragColor += u_Emission;	//加上物体自身的发射光
 			
-			gl_FragColor=vec4(fragColor,1.0);
+			gl_FragColor=vec4(fragColor,1.0)*texture2D(u_Sampler, v_Texcoord)+
+			vec4(specular, 1.0);
+			gl_FragColor.a=u_Alpha; 
 			
 		}
 		</script>

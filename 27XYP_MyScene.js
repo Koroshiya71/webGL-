@@ -27,9 +27,20 @@ var Light = function () {
 	this.ambient = vec3(0.2, 0.2, 0.2);//环境光
 	this.diffuse = vec3(1.0, 1.0, 1.0);//漫反射光
 	this.specular = vec3(1.0, 1.0, 1.0);//镜面反射光
+	this.on = true;//是否打开
 };
 
-
+//光源开关传值
+function passLightsOn() {
+	var lightsOn = [];
+	for (var i = 0; i < lights.length; i++) {
+		if (lights[i].on)
+			lightsOn[i] = 1;
+		else
+			lightsOn[i] = 0;
+	}
+	gl.uniform1iv(program.u_LightOn, lightsOn);
+}
 
 //材质对象
 //构造函数，各属性有默认值
@@ -39,14 +50,14 @@ var Material = function () {
 	this.specular = vec3(0.0, 0.0, 0.0);//镜面反射系数
 	this.emission = vec3(0.0, 0.0, 0.0);//发射光
 	this.shininess = 10;//高光系数
-
+	this.alpha = 1.0;//透明度
 }
 
 var lights = [];//光源数组
 
 var lightSun = new Light(); //使用默认光源属性
 var lightRed = new Light();
-
+var lightYellow = new Light();
 var mtlRedLight = new Material(); //红色光源球使用的材质类型
 //设置红色光源球的材质属性
 mtlRedLight.ambient = vec3(0.1, 0.1, 0.1);// 环境反射系数
@@ -55,7 +66,85 @@ mtlRedLight.specular = vec3(0.2, 0.2, 0.2);// 镜面反射系数
 mtlRedLight.emission = vec3(1.0, 0.0, 0.0);//发射光
 mtlRedLight.shininess = 150;// 高光系数
 
+//红色光源关闭时光源球使用的材质对象
+var mtlRedLightOff = new Material();
+//设置红色光源球的材质属性（光源关闭时）
+mtlRedLightOff.ambient = vec3(0.1, 0.1, 0.1);
+mtlRedLightOff.diffuse = vec3(0.8, 0.8, 0.8);
+mtlRedLightOff.specular = vec3(0.2, 0.2, 0.2);
+mtlRedLightOff.emission = vec3(0.0, 0.0, 0.0);
+mtlRedLightOff.shininess = 150;
+mtlRedLightOff.alpha = 0.5;
 
+
+var lightTexObj;//红色光源球所使用的纹理对象
+var textureLoaded = 0;//已加载完毕的纹理图
+var numTextures = 4; //纹理图总数
+
+var Texture = function (pathName, format, mipmapping) {
+	this.path = pathName;//纹理图文件路径
+	this.format = format;//数据格式
+	this.mipmapping = mipmapping;//是否启用mipmapping
+	this.texture = null;//webgl纹理对象
+	this.complete = false; //是否已完成文件加载
+};
+
+function initTexture(texObj, image) {
+	texObj.texture = gl.createTexture();//创建纹理对象
+	if (!texObj.texture) {
+		console.log("创建纹理对象失败");
+		return false;
+	}
+	//绑定纹理对象
+	gl.bindTexture(gl.TEXTURE_2D, texObj.texture);
+	//在加载纹理图时对其沿Y轴反转
+	gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1);
+	//加载纹理图像
+	gl.texImage2D(gl.TEXTURE_2D, 0,
+		texObj.format, texObj.format, gl.UNSIGNED_BYTE, image);
+
+	if (texObj.mipmapping) {//开启了mipmapping？
+		//自动生成各级分辨率的纹理图
+		gl.generateMipmap(gl.TEXTURE_2D);
+		//设置插值方式
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+	}
+	else
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+
+	texObj.complete = true;//纹理对象初始化完毕
+
+}
+
+function loadTexture(path, format, mipmapping) {
+	//新建一个texture对象
+	var texObj = new Texture(path, format, mipmapping);
+
+	var image = new Image(); //创建一个image对象
+	if (!image) {
+		console.log("创建Image对象失败");
+		return false;
+	}
+	//注册图像文件加载完毕事件的响应函数
+	image.onload = function () {
+		console.log("纹理图" + path + "加载完毕");
+		//初始化纹理对象
+		initTexture(texObj, image);
+
+		textureLoaded++;//增加已加载纹理数
+		//已加载纹理数如果等于总纹理数，则可以开始绘制
+		if (textureLoaded == numTextures)
+			requestAnimFrame(render);//请求重绘
+	};
+
+	//指定图像源，此时浏览器开始加载图像
+	image.src = path;
+	console.log("开始加载纹理图" + path);
+	return texObj;
+}
+
+//创建纹理对象，加载纹理图
+//参数为文件路径、纹理图格式(gl.RGB，gl.RBGA等)
 
 //光源属性初始化
 function initLights() {
@@ -67,6 +156,19 @@ function initLights() {
 	lightRed.diffuse = vec3(1.0, 0.0, 0.0);//漫反射光
 	lightRed.specular = vec3(1.0, 0.0, 0.0);//镜面反射光
 	lights.push(lightRed);
+
+	/*设置手电筒光 */
+	lightYellow.pos = vec4(0.0, 0.0, 0.0, 1.0); // 光源位置(观察坐标系)
+	lightYellow.ambient = vec3(0.0, 0.0, 0.0);//无环境光
+	lightYellow.diffuse = vec3(1.0, 1.0, 0.0);//漫反射光，黄色
+	lightYellow.specular = vec3(1.0, 1.0, 0.0);//镜面反射光，黄色
+	lights.push(lightYellow);
+
+	//给聚光灯参数传值
+	gl.uniform3fv(program.u_SpotDirection, flatten(vec3(0.0, 0.0, -1.0)));//往负z轴照
+	gl.uniform1f(program.u_SpotCutOff, 8);//设截止角
+	gl.uniform1f(program.u_SpotExponent, 3);//衰减指数
+
 }
 // 定义Obj对象
 // 构造函数
@@ -74,45 +176,61 @@ var Obj = function () {
 	this.numVertices = 0; 		// 顶点个数
 	this.vertices = new Array(0); // 用于保存顶点数据的数组
 	this.normals = new Array(0); //用于保存法向数据的数组
+	this.texcoords = new Array(0); //用户柏村纹理坐标数据的数组
 
 	this.vertexBuffer = null;	// 存放顶点数据的buffer对象
 	this.normalBuffer = null;//存放法向数据的buffer对象
+	this.texBuffer = null;//材质纹理坐标buffer
 	this.material = new Material();//材质
+	this.texObj = null;//Texture对象
+
 };
 
 // 初始化缓冲区对象(VBO)
 Obj.prototype.initBuffers = function () {
 	/*创建并初始化顶点坐标缓冲区对象(Buffer Object)*/
-	// 创建缓冲区对象，存于成员变量vertexBuffer中
-	this.vertexBuffer = gl.createBuffer();
-	// 将vertexBuffer绑定为当前Array Buffer对象
-	gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
-	// 为Buffer对象在GPU端申请空间，并提供数据
-	gl.bufferData(gl.ARRAY_BUFFER,	// Buffer类型
-		flatten(this.vertices),		// 数据来源
-		gl.STATIC_DRAW	// 表明是一次提供数据，多遍绘制
-	);
-	// 顶点数据已传至GPU端，可释放内存
-	this.vertices.length = 0;
+	if (this.vertices.length != 0) {
+		// 创建缓冲区对象，存于成员变量vertexBuffer中
+		this.vertexBuffer = gl.createBuffer();
+		// 将vertexBuffer绑定为当前Array Buffer对象
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
+		// 为Buffer对象在GPU端申请空间，并提供数据
+		gl.bufferData(gl.ARRAY_BUFFER,	// Buffer类型
+			flatten(this.vertices),		// 数据来源
+			gl.STATIC_DRAW	// 表明是一次提供数据，多遍绘制
+		);
+		// 顶点数据已传至GPU端，可释放内存
+		this.vertices.length = 0;
+	}
+	if (this.normals.length != 0) {
+		/*创建并初始化法向缓冲区对象(Buffer Object)*/
+		//创建缓冲区对象，存于成员变量nromalBuffer中
+		this.normalBuffer = gl.createBuffer();
+		//将normalBuffer绑定为当前Array Buffer对象
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.normalBuffer);
+		//为buffer对象在GPU端申请空间，并提供数据
+		gl.bufferData(gl.ARRAY_BUFFER,
+			flatten(this.normals),
+			gl.STATIC_DRAW
+		);
+		//顶点数据已传至GPU端，可以释放内存
+		this.normals.length = 0;
+	}
+	/*创建并初始化顶点纹理坐标缓冲区对象（buffer Object) */
+	//创建缓冲区对象，存于成员变量texBuffer中
+	//将textBuffer绑定为当前Array Buffer
+	if (this.texcoords.length != 0) {
+		this.texBuffer = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.texBuffer);
+		gl.bufferData(gl.ARRAY_BUFFER, flatten(this.texcoords), gl.STATIC_DRAW);
+		this.texcoords.length = 0;
 
-	/*创建并初始化法向缓冲区对象(Buffer Object)*/
-	//创建缓冲区对象，存于成员变量nromalBuffer中
-	this.normalBuffer = gl.createBuffer();
-	//将normalBuffer绑定为当前Array Buffer对象
-	gl.bindBuffer(gl.ARRAY_BUFFER, this.normalBuffer);
-	//为buffer对象在GPU端申请空间，并提供数据
-	gl.bufferData(gl.ARRAY_BUFFER,
-		flatten(this.normals),
-		gl.STATIC_DRAW
-	);
-	//顶点数据已传至GPU端，可以释放内存
-	this.normals.length = 0;
-
+	}
 };
 
 // 绘制几何对象
 // 参数为模视矩阵
-Obj.prototype.draw = function (matMV, material) {
+Obj.prototype.draw = function (matMV, material, tmpTexObj) {
 	// 设置为a_Position提供数据的方式
 	gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
 	// 为顶点属性数组提供数据(数据存放在vertexBuffer对象中)
@@ -136,9 +254,14 @@ Obj.prototype.draw = function (matMV, material) {
 	//为a_Normal启用顶点数组
 	gl.enableVertexAttribArray(program.a_Normal);
 
+	//设置为a_Texcoord提供数据的方式
+	gl.bindBuffer(gl.ARRAY_BUFFER, this.texBuffer);
+	gl.vertexAttribPointer(program.a_Texcoord, 2, gl.FLOAT, false, 0, 0);
+	gl.enableVertexAttribArray(program.a_Texcoord);
+
 
 	var mtl;
-	if (arguments.length > 1)//提供了材质
+	if (arguments.length > 1 && arguments[1] != null)//提供了材质
 		mtl = material;
 	else
 		mtl = this.material;
@@ -161,6 +284,21 @@ Obj.prototype.draw = function (matMV, material) {
 
 	gl.uniform3fv(program.u_Emission, flatten(mtl.emission));
 	gl.uniform1f(program.u_Shininess, mtl.shininess);
+	gl.uniform1f(program.u_Alpha, mtl.alpha);//透明度
+
+	var texObj;
+	if (arguments.length > 2 && arguments[2] != null) {//提供了纹理对象
+		texObj = tmpTexObj;
+
+	}
+	else {
+		texObj = this.texObj;
+
+	}
+
+
+	if (texObj != null && texObj.complete)
+		gl.bindTexture(gl.TEXTURE_2D, texObj.texture);
 
 	// 开始绘制
 	gl.uniformMatrix4fv(program.u_ModelView, false,
@@ -176,6 +314,23 @@ Obj.prototype.draw = function (matMV, material) {
 // 返回地面Obj对象
 function buildGround(fExtent, fStep) {
 	var obj = new Obj(); // 新建一个Obj对象
+	var iterations = 2 * fExtent / fStep;//单层循环次数
+	var fTexcoordStep = 40 / iterations; //纹理坐标递增步长
+	for (var x = -fExtent, s = 0; x < fExtent; x += fStep, s += fTexcoordStep) {
+		for (var z = fExtent, t = 0; z > -fExtent; z -= fStep, t += fTexcoordStep) {
+
+
+			//纹理坐标
+			obj.texcoords.push(vec2(s, t + fTexcoordStep));
+			obj.texcoords.push(vec2(s, t));
+			obj.texcoords.push(vec2(s + fTexcoordStep, t));
+			obj.texcoords.push(vec2(s, t + fTexcoordStep));
+			obj.texcoords.push(vec2(s + fTexcoordStep, t));
+			obj.texcoords.push(vec2(s + fTexcoordStep, t + fTexcoordStep));
+			obj.numVertices += 6;
+
+		}
+	}
 	for (var x = -fExtent; x < fExtent; x += fStep) {
 		for (var z = fExtent; z > -fExtent; z -= fStep) {
 			// 以(x, 0, z)为左下角的单元四边形的4个顶点
@@ -276,6 +431,16 @@ function buildSphere(radius, columns, rows) {
 			obj.normals.push(vertices[br]);
 			obj.normals.push(vertices[ur]);
 
+			//纹理坐标
+			obj.texcoords.push(vec2(c / columns, r / rows));
+			obj.texcoords.push(vec2(c / columns, (r + 1) / rows));
+			obj.texcoords.push(vec2((c + 1) / columns, (r + 1) / rows));
+			obj.texcoords.push(vec2(c / columns, r / rows));
+
+			obj.texcoords.push(vec2((c + 1) / columns, (r + 1) / rows));
+			obj.texcoords.push(vec2((c + 1) / columns, r / rows));
+
+
 		}
 	}
 
@@ -304,6 +469,7 @@ function buildTorus(majorRadius, minorRadius, numMajor, numMinor) {
 
 	var majorStep = 2.0 * Math.PI / numMajor;
 	var minorStep = 2.0 * Math.PI / numMinor;
+	var sScale = 4, tScale = 2;//两方方向上纹理坐标的缩放系数
 
 	for (var i = 0; i < numMajor; ++i) {
 		var a0 = i * majorStep;
@@ -346,6 +512,15 @@ function buildTorus(majorRadius, minorRadius, numMajor, numMinor) {
 			obj.normals.push(subtract(left1, center0));
 			obj.normals.push(subtract(right0, center1));
 			obj.normals.push(subtract(right1, center1));
+
+			//纹理坐标
+			obj.texcoords.push(vec2(i / numMajor * sScale, j / numMinor * tScale));
+			obj.texcoords.push(vec2((i + 1) / numMajor * sScale, j / numMinor * tScale));
+			obj.texcoords.push(vec2(i / numMajor * sScale, (j + 1) / numMinor * tScale));
+			obj.texcoords.push(vec2(i / numMajor * sScale, (j + 1) / numMinor * tScale));
+			obj.texcoords.push(vec2((i + 1) / numMajor * sScale, j / numMinor * tScale));
+			obj.texcoords.push(vec2((i + 1) / numMajor * sScale, (j + 1) / numMinor * tScale));
+
 
 		}
 	}
@@ -412,9 +587,43 @@ function getLocation() {
 	if (!program.u_SpecularProduct) {
 		console.log("获取uniform变量u_SpecularProduct失败！");
 	}
+
+	program.u_SpotExponent = gl.getUniformLocation(program, "u_SpotExponent");
+	if (!program.u_SpotExponent) {
+		console.log("获取uniform变量u_SpotExponent失败！");
+	}
+
+	program.u_SpotCutOff = gl.getUniformLocation(program, "u_SpotCutOff");
+	if (!program.u_SpotCutOff) {
+		console.log("获取uniform变量u_SpotCutOff失败！");
+	}
+
+	program.u_SpotDirection = gl.getUniformLocation(program, "u_SpotDirection");
+	if (!program.u_SpotDirection) {
+		console.log("获取uniform变量u_SpotDirection失败！");
+	}
+	program.u_LightOn = gl.getUniformLocation(program, "u_LightOn");
+	if (!program.u_LightOn) {
+		console.log("获取uniform变量u_LightOn失败！");
+	}
+
+	program.a_Texcoord = gl.getAttribLocation(program, "a_Texcoord");
+	if (!program.a_Texcoord) {
+		console.log("获取uniform变量a_Texcoord失败！");
+	}
+
+	program.u_Sampler = gl.getUniformLocation(program, "u_Sampler");
+	if (!program.u_Sampler) {
+		console.log("获取uniform变量u_Sampler失败！");
+	}
+
+	program.u_Alpha = gl.getUniformLocation(program, "u_Alpha");
+	if (!program.u_Alpha) {
+		console.log("获取uniform变量u_Alpha失败！");
+	}
 }
 
-var ground = buildGround(20.0, 1.0); // 生成地面对象
+var ground = buildGround(20.0, 0.1); // 生成地面对象
 
 var numSpheres = 50;  // 场景中球的数目
 // 用于保存球位置的数组，对每个球位置保存其x、z坐标
@@ -427,7 +636,7 @@ var torus = buildTorus(0.35, 0.15, 40, 20); // 生成圆环对象
 function initObjs() {
 	// 初始化地面顶点数据缓冲区对象(VBO)
 	ground.initBuffers();
-
+	ground.texObj = loadTexture("Res\\ground.bmp", gl.RGB, true);
 	var sizeGround = 20;
 	// 随机放置球的位置
 	for (var iSphere = 0; iSphere < numSpheres; iSphere++) {
@@ -439,9 +648,12 @@ function initObjs() {
 
 	// 初始化球顶点数据缓冲区对象(VBO)
 	sphere.initBuffers();
-
+	torus.texObj = loadTexture("res/sphere.jpg", gl.RGB, true);
+	lightTexObj = loadTexture("res/sun.bmp", gl.RGB, true);
 	// 初始化圆环顶点数据缓冲区对象(VBO)
 	torus.initBuffers();
+	//初始化圆环纹理
+	torus.texObj = loadTexture("Res\\torus.jpg", gl.RGB, true);
 }
 
 
@@ -456,7 +668,7 @@ window.onload = function main() {
 
 	// 利用辅助程序文件中的功能获取WebGL上下文
 	// 成功则后面可通过gl来调用WebGL的函数
-	gl = WebGLUtils.setupWebGL(canvas);
+	gl = WebGLUtils.setupWebGL(canvas, { alpha: false });
 	if (!gl) { // 失败则弹出信息
 		alert("获取WebGL上下文失败！");
 		return;
@@ -468,7 +680,9 @@ window.onload = function main() {
 	gl.enable(gl.CULL_FACE);	// 开启面剔除
 	// 设置视口，占满整个canvas
 	gl.viewport(0, 0, canvas.width, canvas.height);
-
+	gl.enable(gl.BLEND);	//开启混合
+	//设置混合方式
+	gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 	/*加载shader程序并为shader中attribute变量提供数据*/
 	// 加载id分别为"vertex-shader"和"fragment-shader"的shader程序，
 	// 并进行编译和链接，返回shader程序对象program
@@ -487,14 +701,14 @@ window.onload = function main() {
 
 	//传投影矩阵
 	gl.uniformMatrix4fv(program.u_Projection, false, flatten(matProj));
-
+	//本程序只用了0号纹理单元
+	gl.uniform1i(program.u_Sampler, 0);
 	//初始化光照
 	initLights();
 	// 初始化场景中的几何对象
 	initObjs();
 
-	// 进行绘制
-	render();
+	//render();
 };
 
 // 按键响应
@@ -533,6 +747,18 @@ window.onkeydown = function () {
 				jumping = true;
 				jumpTime = 0;
 			}
+			break;
+		case 49://'1'
+			lights[0].on = !lights[0].on;
+			passLightsOn();
+			break;
+		case 50://'2'
+			lights[1].on = !lights[1].on;
+			passLightsOn();
+			break;
+		case 51://'3'
+			lights[2].on = !lights[2].on;
+			passLightsOn();
 			break;
 	}
 	// 禁止默认处理(例如上下方向键对滚动条的控制)
@@ -615,7 +841,7 @@ function updateCamera() {
 // 绘制函数
 function render() {
 	animation(); // 更新动画参数
-
+	passLightsOn();
 	updateCamera(); // 更新相机变换
 
 	// 清颜色缓存和深度缓存
@@ -632,6 +858,7 @@ function render() {
 		mult(rotateY(-yRot * 2.0), translate(1.0, 0.0, 0.0))));
 	lightPositions.push(mult(matMV, lightSun.pos));
 	lightPositions.push(mult(matRotatingSphere, lightRed.pos));
+	lightPositions.push(lightYellow.pos);
 	//传观察坐标系下光源位置/方向
 	gl.uniform4fv(program.u_LightPosition,
 		flatten(lightPositions));
@@ -657,19 +884,27 @@ function render() {
 	// 使得它们位于摄像机前方(也即世界坐标系原点前方)
 	matMV = mult(matMV, translate(0.0, 0.0, -2.5));
 
+
+
+	/*绘制自转的圆环*/
+	mvStack.push(matMV);
+	matMV = mult(matMV, translate(0.0, 0.1, 0.0));
+	matMV = mult(matMV, rotateY(yRot));
+	torus.draw(matMV);
+	matMV = mvStack.pop();
+
 	/*绘制绕原点旋转的球*/
 	mvStack.push(matMV); // 使得下面对球的变换不影响后面绘制的圆环
 	// 调整南北极后先旋转再平移
 	matMV = mult(matMV, rotateY(-yRot * 2.0));
 	matMV = mult(matMV, translate(1.0, 0.0, 0.0));
 	matMV = mult(matMV, rotateX(90)); // 调整南北极
-	sphere.draw(matMV,mtlRedLight);
-	matMV = mvStack.pop();
+	if (lights[1].on)//红色光源打开时
+		sphere.draw(matMV, mtlRedLight, lightTexObj);
+	else
+		sphere.draw(matMV, mtlRedLightOff, lightTexObj);
 
-	/*绘制自转的圆环*/
-	matMV = mult(matMV, translate(0.0, 0.1, 0.0));
-	matMV = mult(matMV, rotateY(yRot));
-	torus.draw(matMV);
+	matMV = mvStack.pop();
 
 	requestAnimFrame(render); // 请求重绘
 }
